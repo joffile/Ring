@@ -15,7 +15,6 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -40,43 +39,20 @@ import java.io.FileOutputStream
 import java.io.InputStream
 
 data class Song(
-    val key: String,
-    val id: Long,
-    val uri: Uri?,
-    val path: String,
-    val title: String,
-    val artist: String,
-    val durationMs: Long,
-    val sizeBytes: Long,
-    val folder: String,
-    val volume: String,
-    val owner: String?,
-    val isRingtone: Boolean,
-    val isNotification: Boolean,
-    val isAlarm: Boolean,
-    val indexed: Boolean,
-    val dateAdded: Long
+    val key: String, val id: Long, val uri: Uri?, val path: String, val title: String, val artist: String,
+    val durationMs: Long, val sizeBytes: Long, val folder: String, val volume: String, val owner: String?,
+    val isRingtone: Boolean, val isNotification: Boolean, val isAlarm: Boolean, val indexed: Boolean, val dateAdded: Long
 )
 
-data class ScanStats(
-    val files: Int,
-    val folders: Int,
-    val volumes: Int,
-    val diskOnly: Int,
-    val seconds: Float
-)
+data class ScanStats(val files: Int, val folders: Int, val volumes: Int, val diskOnly: Int, val seconds: Float)
 
 fun readPermissions(): Array<String> = when {
     Build.VERSION.SDK_INT >= 33 -> arrayOf(android.Manifest.permission.READ_MEDIA_AUDIO)
-    Build.VERSION.SDK_INT <= 28 -> arrayOf(
-        android.Manifest.permission.READ_EXTERNAL_STORAGE,
-        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-    )
+    Build.VERSION.SDK_INT <= 28 -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
     else -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
 }
 
 class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
-
     val songs = MutableStateFlow<List<Song>>(emptyList())
     val aliases = MutableStateFlow<Map<String, String>>(emptyMap())
     val favorites = MutableStateFlow<Set<String>>(emptySet())
@@ -109,8 +85,6 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
     val durationMs = MutableStateFlow(0)
     val isDay = MutableStateFlow(false)
     val themeProgress = MutableStateFlow(0f)
-    val contactPickerRequest = MutableStateFlow(false)
-    val contactsPermissionRequest = MutableStateFlow(false)
 
     private val prefs = app.getSharedPreferences("ringtones", Context.MODE_PRIVATE)
     private val aliasPrefs = app.getSharedPreferences("aliases", Context.MODE_PRIVATE)
@@ -121,12 +95,8 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
     private var scanJob: Job? = null
     private var prepared = false
     private var queue: List<String> = emptyList()
-    private var pendingContactSong: Song? = null
 
-    private val audioExt = setOf(
-        "mp3", "m4a", "m4b", "aac", "ogg", "oga", "opus", "wav", "flac", "amr", "awb",
-        "mid", "midi", "imy", "ota", "rtttl", "rtx", "wma", "mka", "aiff", "aif", "ape", "3ga", "mp2", "ac3", "caf"
-    )
+    private val audioExt = setOf("mp3", "m4a", "m4b", "aac", "ogg", "oga", "opus", "wav", "flac", "amr", "awb", "mid", "midi", "imy", "ota", "rtttl", "rtx", "wma", "mka", "aiff", "aif", "ape", "3ga", "mp2", "ac3", "caf")
     private val skipDirs = setOf("android", "cache", "caches", "node_modules", "lost+found", ".thumbnails", "temp", "tmp")
 
     init {
@@ -149,171 +119,78 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
         if (hasPermission.value) quickRefresh()
     }
 
-    // ---------- тема ----------
-
     fun setDay(day: Boolean) {
-        isDay.value = day
-        prefs.edit().putBoolean("day", day).apply()
-        viewModelScope.launch {
-            themeAnim.animateTo(if (day) 1f else 0f, tween(680, easing = FastOutSlowInEasing)) {
-                themeProgress.value = value
-            }
-        }
+        isDay.value = day; prefs.edit().putBoolean("day", day).apply()
+        viewModelScope.launch { themeAnim.animateTo(if (day) 1f else 0f, tween(680, easing = FastOutSlowInEasing)) { themeProgress.value = value } }
     }
-
-    suspend fun dragTheme(f: Float) {
-        themeAnim.snapTo(f.coerceIn(0f, 1f))
-        themeProgress.value = themeAnim.value
-    }
-
-    // ---------- настройки ----------
+    suspend fun dragTheme(f: Float) { themeAnim.snapTo(f.coerceIn(0f, 1f)); themeProgress.value = themeAnim.value }
 
     fun setSort(v: Int) { sort.value = v; prefs.edit().putInt("sort", v).apply() }
     fun setMinDuration(v: Int) { minDuration.value = v; prefs.edit().putInt("minDur", v).apply() }
     fun setScanFs(v: Boolean) { scanFs.value = v; prefs.edit().putBoolean("scanFs", v).apply() }
     fun setHideSystem(v: Boolean) { hideSystem.value = v; prefs.edit().putBoolean("hideSystem", v).apply() }
     fun setShowPaths(v: Boolean) { showPaths.value = v; prefs.edit().putBoolean("showPaths", v).apply() }
-
-    fun setVolume(v: Int) {
-        volumeLevel.value = v
-        prefs.edit().putInt("vol", v).apply()
-        applyVolume()
-    }
-
-    fun setMuted(v: Boolean) {
-        muted.value = v
-        prefs.edit().putBoolean("muted", v).apply()
-        applyVolume()
-    }
-
+    fun setVolume(v: Int) { volumeLevel.value = v; prefs.edit().putInt("vol", v).apply(); applyVolume() }
+    fun setMuted(v: Boolean) { muted.value = v; prefs.edit().putBoolean("muted", v).apply(); applyVolume() }
     fun setRepeat(v: Boolean) { repeat.value = v; prefs.edit().putBoolean("repeat", v).apply() }
+    private fun applyVolume() { val l = if (muted.value) 0f else volumeLevel.value / 100f; runCatching { player?.setVolume(l, l) } }
 
-    private fun applyVolume() {
-        val level = if (muted.value) 0f else volumeLevel.value / 100f
-        runCatching { player?.setVolume(level, level) }
-    }
-
-    fun displayTitle(s: Song): String = aliases.value[s.key] ?: s.title
-
+    fun displayTitle(s: Song) = aliases.value[s.key] ?: s.title
     fun setAlias(key: String, name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) aliasPrefs.edit().remove(key).apply()
-        else aliasPrefs.edit().putString(key, trimmed).apply()
+        val t = name.trim()
+        if (t.isEmpty()) aliasPrefs.edit().remove(key).apply() else aliasPrefs.edit().putString(key, t).apply()
         aliases.value = aliasPrefs.all.mapNotNull { e -> (e.value as? String)?.let { e.key to it } }.toMap()
-        message.value = if (trimmed.isEmpty()) "Имя сброшено" else "Переименовано"
+        message.value = if (t.isEmpty()) "Имя сброшено" else "Переименовано"
     }
-
-    fun clearAliases() {
-        aliasPrefs.edit().clear().apply()
-        aliases.value = emptyMap()
-        message.value = "Все имена сброшены"
-    }
-
-    fun toggleFavorite(key: String) {
-        val next = if (key in favorites.value) favorites.value - key else favorites.value + key
-        favorites.value = next
-        prefs.edit().putStringSet("fav", next).apply()
-    }
-
-    fun clearFavorites() {
-        favorites.value = emptySet()
-        prefs.edit().putStringSet("fav", emptySet()).apply()
-        message.value = "Избранное очищено"
-    }
-
-    // ---------- разрешения ----------
+    fun clearAliases() { aliasPrefs.edit().clear().apply(); aliases.value = emptyMap(); message.value = "Все имена сброшены" }
+    fun toggleFavorite(key: String) { val n = if (key in favorites.value) favorites.value - key else favorites.value + key; favorites.value = n; prefs.edit().putStringSet("fav", n).apply() }
+    fun clearFavorites() { favorites.value = emptySet(); prefs.edit().putStringSet("fav", emptySet()).apply(); message.value = "Избранное очищено" }
 
     fun checkPermission(): Boolean {
-        val permission = if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_AUDIO
-        else android.Manifest.permission.READ_EXTERNAL_STORAGE
-        return getApplication<Application>().checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        val p = if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_AUDIO else android.Manifest.permission.READ_EXTERNAL_STORAGE
+        return getApplication<Application>().checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     }
-
-    fun onPermissionResult() {
-        hasPermission.value = checkPermission()
-        if (hasPermission.value) quickRefresh()
-    }
-
-    // ---------- быстрое чтение медиатеки ----------
+    fun onPermissionResult() { hasPermission.value = checkPermission(); if (hasPermission.value) quickRefresh() }
 
     fun quickRefresh() {
         if (!checkPermission()) { hasPermission.value = false; return }
         hasPermission.value = true
         viewModelScope.launch {
             loading.value = true
-            val list = withContext(Dispatchers.IO) {
-                val map = LinkedHashMap<String, Song>()
-                volumeNames().forEach { v ->
-                    runCatching { queryAudio(v) }.getOrNull()?.forEach { map[it.path.lowercase()] = it }
-                }
-                map.values.toList()
-            }
+            val list = withContext(Dispatchers.IO) { val m = LinkedHashMap<String, Song>(); volumeNames().forEach { v -> runCatching { queryAudio(v) }.getOrNull()?.forEach { m[it.path.lowercase()] = it } }; m.values.toList() }
             if (list.isNotEmpty() || songs.value.isEmpty()) songs.value = list
             loading.value = false
         }
     }
 
-    private fun volumeNames(): List<String> =
-        if (Build.VERSION.SDK_INT >= 29)
-            runCatching { MediaStore.getExternalVolumeNames(getApplication<Application>()).toList() }.getOrDefault(listOf("external"))
-        else listOf("external")
-
-    private fun audioUri(volume: String): Uri =
-        if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(volume)
-        else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-
-    private fun filesUri(volume: String): Uri =
-        if (Build.VERSION.SDK_INT >= 29) MediaStore.Files.getContentUri(volume)
-        else MediaStore.Files.getContentUri("external")
+    private fun volumeNames(): List<String> = if (Build.VERSION.SDK_INT >= 29) runCatching { MediaStore.getExternalVolumeNames(getApplication<Application>()).toList() }.getOrDefault(listOf("external")) else listOf("external")
+    private fun audioUri(v: String): Uri = if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(v) else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+    private fun filesUri(v: String): Uri = if (Build.VERSION.SDK_INT >= 29) MediaStore.Files.getContentUri(v) else MediaStore.Files.getContentUri("external")
 
     private fun queryAudio(volume: String): List<Song> {
-        val base = arrayOf(
-            MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DATE_ADDED,
-            MediaStore.Audio.Media.IS_RINGTONE, MediaStore.Audio.Media.IS_NOTIFICATION, MediaStore.Audio.Media.IS_ALARM
-        )
-        val projection = if (Build.VERSION.SDK_INT >= 29) base + MediaStore.Audio.Media.OWNER_PACKAGE_NAME else base
+        val base = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DATE_ADDED, MediaStore.Audio.Media.IS_RINGTONE, MediaStore.Audio.Media.IS_NOTIFICATION, MediaStore.Audio.Media.IS_ALARM)
+        val proj = if (Build.VERSION.SDK_INT >= 29) base + MediaStore.Audio.Media.OWNER_PACKAGE_NAME else base
         val out = ArrayList<Song>()
-        resolver.query(audioUri(volume), projection, null, null, null)?.use { c ->
-            val ownerIdx = c.getColumnIndex(MediaStore.Audio.Media.OWNER_PACKAGE_NAME)
+        resolver.query(audioUri(volume), proj, null, null, null)?.use { c ->
+            val oi = c.getColumnIndex(MediaStore.Audio.Media.OWNER_PACKAGE_NAME)
             while (c.moveToNext()) {
-                val id = c.getLong(0)
-                val path = c.getString(4) ?: continue
-                val display = c.getString(5) ?: File(path).name
-                val artist = c.getString(2)
-                out.add(
-                    Song(
-                        key = path, id = id,
-                        uri = ContentUris.withAppendedId(audioUri(volume), id),
-                        path = path,
-                        title = c.getString(1)?.takeIf { it.isNotBlank() } ?: display.substringBeforeLast('.'),
-                        artist = if (artist.isNullOrBlank() || artist == "<unknown>") "Без тегов" else artist,
-                        durationMs = c.getLong(3), sizeBytes = c.getLong(6),
-                        folder = File(path).parentFile?.name ?: "/", volume = volume,
-                        owner = if (ownerIdx >= 0) c.getString(ownerIdx) else null,
-                        isRingtone = c.getInt(8) != 0, isNotification = c.getInt(9) != 0, isAlarm = c.getInt(10) != 0,
-                        indexed = true, dateAdded = c.getLong(7)
-                    )
-                )
+                val id = c.getLong(0); val path = c.getString(4) ?: continue
+                val disp = c.getString(5) ?: File(path).name; val ar = c.getString(2)
+                out.add(Song(path, id, ContentUris.withAppendedId(audioUri(volume), id), path,
+                    c.getString(1)?.takeIf { it.isNotBlank() } ?: disp.substringBeforeLast('.'),
+                    if (ar.isNullOrBlank() || ar == "<unknown>") "Без тегов" else ar,
+                    c.getLong(3), c.getLong(6), File(path).parentFile?.name ?: "/", volume,
+                    if (oi >= 0) c.getString(oi) else null, c.getInt(8) != 0, c.getInt(9) != 0, c.getInt(10) != 0, true, c.getLong(7)))
             }
         }
         return out
     }
 
     private fun queryFiles(volume: String, known: Set<String>): List<Pair<String, Long>> {
-        val projection = arrayOf(
-            MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DATA,
-            MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.SIZE
-        )
-        val selection = "mime_type LIKE 'audio/%' OR mime_type = 'application/ogg'"
+        val proj = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DATA, MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.SIZE)
         val out = ArrayList<Pair<String, Long>>()
-        resolver.query(filesUri(volume), projection, selection, null, null)?.use { c ->
-            while (c.moveToNext()) {
-                val path = c.getString(1) ?: continue
-                if (known.contains(path.lowercase())) continue
-                out.add(path to c.getLong(3))
-            }
+        resolver.query(filesUri(volume), proj, "mime_type LIKE 'audio/%' OR mime_type = 'application/ogg'", null, null)?.use { c ->
+            while (c.moveToNext()) { val p = c.getString(1) ?: continue; if (!known.contains(p.lowercase())) out.add(p to c.getLong(3)) }
         }
         return out
     }
@@ -321,113 +198,46 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
     private fun storageRoots(): List<File> {
         val roots = LinkedHashSet<File>()
         runCatching { roots.add(Environment.getExternalStorageDirectory()) }
-        runCatching {
-            getApplication<Application>().getExternalFilesDirs(null)?.forEach { f ->
-                if (f != null) {
-                    val p = f.absolutePath
-                    val i = p.indexOf("/Android/data")
-                    if (i > 0) roots.add(File(p.substring(0, i)))
-                }
-            }
-        }
-        runCatching {
-            File("/storage").listFiles()?.forEach { f ->
-                if (f.isDirectory && f.name.matches(Regex("[0-9A-Za-z]{4}-[0-9A-Za-z]{4}"))) roots.add(f)
-            }
-        }
+        runCatching { getApplication<Application>().getExternalFilesDirs(null)?.forEach { f -> if (f != null) { val i = f.absolutePath.indexOf("/Android/data"); if (i > 0) roots.add(File(f.absolutePath.substring(0, i))) } } }
+        runCatching { File("/storage").listFiles()?.forEach { f -> if (f.isDirectory && f.name.matches(Regex("[0-9A-Za-z]{4}-[0-9A-Za-z]{4}"))) roots.add(f) } }
         return roots.filter { it.isDirectory && it.canRead() }
     }
 
     private fun readMeta(path: String): Triple<Long, String?, String?> {
-        val mmr = MediaMetadataRetriever()
-        return try {
-            mmr.setDataSource(path)
-            val d = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            Triple(
-                d,
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-            )
-        } catch (e: Exception) {
-            Triple(0L, null, null)
-        } finally {
-            runCatching { mmr.release() }
-        }
+        val m = MediaMetadataRetriever()
+        return try { m.setDataSource(path); Triple(m.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L, m.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE), m.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)) }
+        catch (e: Exception) { Triple(0L, null, null) } finally { runCatching { m.release() } }
     }
 
     private fun diskSong(path: String, size: Long, meta: Triple<Long, String?, String?>): Song {
         val f = File(path)
-        return Song(
-            key = path, id = -(kotlin.math.abs(path.hashCode().toLong()) + 1L), uri = null, path = path,
-            title = meta.second?.takeIf { it.isNotBlank() } ?: f.nameWithoutExtension,
-            artist = meta.third?.takeIf { it.isNotBlank() } ?: "Без тегов",
-            durationMs = meta.first, sizeBytes = if (size > 0) size else f.length(),
-            folder = f.parentFile?.name ?: "/", volume = "диск", owner = null,
-            isRingtone = false, isNotification = false, isAlarm = false, indexed = false,
-            dateAdded = f.lastModified() / 1000L
-        )
+        return Song(path, -(kotlin.math.abs(path.hashCode().toLong()) + 1L), null, path,
+            meta.second?.takeIf { it.isNotBlank() } ?: f.nameWithoutExtension, meta.third?.takeIf { it.isNotBlank() } ?: "Без тегов",
+            meta.first, if (size > 0) size else f.length(), f.parentFile?.name ?: "/", "диск", null, false, false, false, false, f.lastModified() / 1000L)
     }
-
-    // ---------- глобальный поиск ----------
 
     fun deepScan() {
         if (scanning.value) return
-        if (!checkPermission()) {
-            hasPermission.value = false
-            message.value = "Нет доступа к аудио"
-            return
-        }
+        if (!checkPermission()) { hasPermission.value = false; message.value = "Нет доступа к аудио"; return }
         scanJob = viewModelScope.launch {
-            scanning.value = true
-            scanFolders.value = 0
-            scanFound.value = 0
-            scanPhase.value = "Подготовка"
+            scanning.value = true; scanFolders.value = 0; scanFound.value = 0; scanPhase.value = "Подготовка"
             val started = System.currentTimeMillis()
             try {
                 val result = withContext(Dispatchers.IO) {
-                    val map = LinkedHashMap<String, Song>()
-                    val volumes = volumeNames()
-                    volumes.forEach { v ->
-                        scanPhase.value = "Медиатека · $v"
-                        runCatching { queryAudio(v) }.getOrNull()?.forEach { map[it.path.lowercase()] = it }
-                        scanFound.value = map.size
-                    }
+                    val map = LinkedHashMap<String, Song>(); val volumes = volumeNames()
+                    volumes.forEach { v -> scanPhase.value = "Медиатека · $v"; runCatching { queryAudio(v) }.getOrNull()?.forEach { map[it.path.lowercase()] = it }; scanFound.value = map.size }
                     val extra = ArrayList<Pair<String, Long>>()
-                    volumes.forEach { v ->
-                        scanPhase.value = "Файлы · $v"
-                        runCatching { queryFiles(v, map.keys) }.getOrNull()?.forEach { p ->
-                            if (extra.none { it.first == p.first }) extra.add(p)
-                        }
-                    }
-                    var folders = 0
-                    val disk = ArrayList<Pair<String, Long>>()
+                    volumes.forEach { v -> scanPhase.value = "Файлы · $v"; runCatching { queryFiles(v, map.keys) }.getOrNull()?.forEach { p -> if (extra.none { it.first == p.first }) extra.add(p) } }
+                    var folders = 0; val disk = ArrayList<Pair<String, Long>>()
                     if (scanFs.value) {
-                        val stack = ArrayDeque<File>()
-                        storageRoots().forEach { stack.addLast(it) }
-                        var visited = 0
+                        val stack = ArrayDeque<File>(); storageRoots().forEach { stack.addLast(it) }; var visited = 0
                         while (stack.isNotEmpty() && visited < 30000 && isActive) {
-                            val dir = stack.removeLast()
-                            visited++
-                            folders = visited
-                            if (visited % 8 == 0) {
-                                scanFolders.value = visited
-                                scanPhase.value = "Папки · " + (dir.name.ifEmpty { "/" })
-                                yield()
-                            }
-                            val children = runCatching { dir.listFiles() }.getOrNull() ?: continue
-                            for (f in children) {
-                                val name = f.name
-                                if (f.isDirectory) {
-                                    if (name.startsWith(".")) continue
-                                    if (hideSystem.value && skipDirs.contains(name.lowercase())) continue
-                                    stack.addLast(f)
-                                } else {
-                                    if (name.startsWith(".")) continue
-                                    if (!audioExt.contains(f.extension.lowercase())) continue
-                                    val k = f.absolutePath.lowercase()
-                                    if (map.containsKey(k)) continue
-                                    if (disk.none { it.first.lowercase() == k }) disk.add(f.absolutePath to f.length())
-                                }
+                            val dir = stack.removeLast(); visited++; folders = visited
+                            if (visited % 8 == 0) { scanFolders.value = visited; scanPhase.value = "Папки · " + dir.name.ifEmpty { "/" }; yield() }
+                            val ch = runCatching { dir.listFiles() }.getOrNull() ?: continue
+                            for (f in ch) { val n = f.name
+                                if (f.isDirectory) { if (n.startsWith(".")) continue; if (hideSystem.value && skipDirs.contains(n.lowercase())) continue; stack.addLast(f) }
+                                else { if (n.startsWith(".")) continue; if (!audioExt.contains(f.extension.lowercase())) continue; val k = f.absolutePath.lowercase(); if (map.containsKey(k)) continue; if (disk.none { it.first.lowercase() == k }) disk.add(f.absolutePath to f.length()) }
                             }
                         }
                         scanFolders.value = folders
@@ -435,295 +245,73 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
                     val pending = extra + disk
                     pending.forEachIndexed { i, pair ->
                         if (!isActive) return@forEachIndexed
-                        if (i % 6 == 0) {
-                            scanPhase.value = "Теги · ${i + 1}/${pending.size}"
-                            scanFound.value = map.size + i
-                            yield()
-                        }
-                        val meta = if (i < 900) readMeta(pair.first) else Triple(0L, null, null)
-                        map[pair.first.lowercase()] = diskSong(pair.first, pair.second, meta)
+                        if (i % 6 == 0) { scanPhase.value = "Теги · ${i + 1}/${pending.size}"; scanFound.value = map.size + i; yield() }
+                        map[pair.first.lowercase()] = diskSong(pair.first, pair.second, if (i < 900) readMeta(pair.first) else Triple(0L, null, null))
                     }
-                    if (pending.isNotEmpty()) {
-                        scanPhase.value = "Индексация"
-                        runCatching {
-                            pending.take(3000).chunked(180).forEach { chunk ->
-                                MediaScannerConnection.scanFile(
-                                    getApplication<Application>(),
-                                    chunk.map { it.first }.toTypedArray(),
-                                    null,
-                                    null
-                                )
-                            }
-                        }
-                    }
+                    if (pending.isNotEmpty()) { scanPhase.value = "Индексация"; runCatching { pending.take(3000).chunked(180).forEach { ch -> MediaScannerConnection.scanFile(getApplication<Application>(), ch.map { it.first }.toTypedArray(), null, null) } } }
                     Triple(map.values.toList(), folders, volumes.size)
                 }
                 songs.value = result.first
-                stats.value = ScanStats(
-                    files = result.first.size,
-                    folders = result.second,
-                    volumes = result.third,
-                    diskOnly = result.first.count { !it.indexed },
-                    seconds = (System.currentTimeMillis() - started) / 1000f
-                )
-                scanFound.value = result.first.size
-                scanPhase.value = "Готово"
-                message.value = "Найдено ${result.first.size} аудиофайлов"
-            } catch (e: Exception) {
-                scanPhase.value = "Остановлено"
-            } finally {
-                scanning.value = false
-            }
+                stats.value = ScanStats(result.first.size, result.second, result.third, result.first.count { !it.indexed }, (System.currentTimeMillis() - started) / 1000f)
+                scanFound.value = result.first.size; scanPhase.value = "Готово"; message.value = "Найдено ${result.first.size} аудиофайлов"
+            } catch (e: Exception) { scanPhase.value = "Остановлено" } finally { scanning.value = false }
         }
     }
 
-    fun cancelScan() {
-        scanJob?.cancel()
-        scanJob = null
-        scanning.value = false
-        scanPhase.value = "Остановлено"
-        message.value = "Сканирование остановлено"
-    }
+    fun cancelScan() { scanJob?.cancel(); scanJob = null; scanning.value = false; scanPhase.value = "Остановлено"; message.value = "Сканирование остановлено" }
 
     fun indexUnindexed() {
         val paths = songs.value.filter { !it.indexed }.map { it.path }
         if (paths.isEmpty()) { message.value = "Все файлы уже в медиатеке"; return }
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    paths.chunked(180).forEach {
-                        MediaScannerConnection.scanFile(getApplication<Application>(), it.toTypedArray(), null, null)
-                    }
-                }
-            }
-            message.value = "Проиндексировано ${paths.size} файлов"
-            delay(1200)
-            quickRefresh()
+            withContext(Dispatchers.IO) { runCatching { paths.chunked(180).forEach { MediaScannerConnection.scanFile(getApplication<Application>(), it.toTypedArray(), null, null) } } }
+            message.value = "Проиндексировано ${paths.size} файлов"; delay(1200); quickRefresh()
         }
     }
-
-    // ---------- плеер ----------
 
     fun play(song: Song, visible: List<Song>) {
-        if (playingKey.value == song.key && player != null) {
-            if (isPlaying.value) pause() else resume()
-            return
-        }
-        queue = visible.map { it.key }
-        stopPlayer()
-        playingKey.value = song.key
-        positionMs.value = 0
-        durationMs.value = song.durationMs.toInt()
-        val mp = MediaPlayer()
-        player = mp
+        if (playingKey.value == song.key && player != null) { if (isPlaying.value) pause() else resume(); return }
+        queue = visible.map { it.key }; stopPlayer()
+        playingKey.value = song.key; positionMs.value = 0; durationMs.value = song.durationMs.toInt()
+        val mp = MediaPlayer(); player = mp
         try {
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            val u = song.uri
-            if (u != null) mp.setDataSource(getApplication<Application>(), u) else mp.setDataSource(song.path)
-            mp.setOnPreparedListener {
-                prepared = true
-                durationMs.value = it.duration
-                applyVolume()
-                runCatching { it.start() }
-                isPlaying.value = true
-                startTicker()
-            }
+            mp.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            val u = song.uri; if (u != null) mp.setDataSource(getApplication<Application>(), u) else mp.setDataSource(song.path)
+            mp.setOnPreparedListener { prepared = true; durationMs.value = it.duration; applyVolume(); runCatching { it.start() }; isPlaying.value = true; startTicker() }
             mp.setOnCompletionListener {
-                if (repeat.value) {
-                    runCatching { it.seekTo(0); it.start() }
-                    positionMs.value = 0
-                } else {
-                    val idx = queue.indexOf(song.key)
-                    val nextKey = queue.getOrNull(idx + 1)
-                    val nextSong = songs.value.firstOrNull { s -> s.key == nextKey }
-                    if (nextSong != null) play(nextSong, songs.value.filter { q -> queue.contains(q.key) })
-                    else { isPlaying.value = false; positionMs.value = 0; ticker?.cancel() }
-                }
+                if (repeat.value) { runCatching { it.seekTo(0); it.start() }; positionMs.value = 0 }
+                else { val nk = queue.getOrNull(queue.indexOf(song.key) + 1); val ns = songs.value.firstOrNull { s -> s.key == nk }; if (ns != null) play(ns, songs.value.filter { q -> queue.contains(q.key) }) else { isPlaying.value = false; positionMs.value = 0; ticker?.cancel() } }
             }
-            mp.setOnErrorListener { _, _, _ ->
-                message.value = "Не удалось воспроизвести файл"
-                stop()
-                true
-            }
+            mp.setOnErrorListener { _, _, _ -> message.value = "Не удалось воспроизвести файл"; stop(); true }
             mp.prepareAsync()
-        } catch (e: Exception) {
-            message.value = "Файл недоступен"
-            stop()
-        }
+        } catch (e: Exception) { message.value = "Файл недоступен"; stop() }
     }
 
-    fun skip(delta: Int) {
-        val current = playingKey.value ?: return
-        val idx = queue.indexOf(current)
-        if (idx < 0) return
-        val target = queue.getOrNull(idx + delta) ?: return
-        val song = songs.value.firstOrNull { it.key == target } ?: return
-        val keep = queue
-        playingKey.value = null
-        play(song, songs.value.filter { keep.contains(it.key) })
-    }
-
-    fun pause() {
-        val mp = player ?: return
-        if (prepared) runCatching { mp.pause() }
-        isPlaying.value = false
-        ticker?.cancel()
-    }
-
-    fun resume() {
-        val mp = player ?: return
-        if (!prepared) return
-        runCatching { mp.start() }
-        isPlaying.value = true
-        startTicker()
-    }
-
-    fun seekFraction(f: Float) {
-        val total = durationMs.value
-        if (total <= 0) return
-        val ms = (f.coerceIn(0f, 1f) * total).toInt()
-        if (prepared) runCatching { player?.seekTo(ms) }
-        positionMs.value = ms
-    }
-
-    fun stop() {
-        stopPlayer()
-        playingKey.value = null
-        positionMs.value = 0
-        durationMs.value = 0
-    }
-
-    private fun stopPlayer() {
-        ticker?.cancel()
-        ticker = null
-        prepared = false
-        player?.let { mp ->
-            runCatching { mp.reset() }
-            runCatching { mp.release() }
-        }
-        player = null
-        isPlaying.value = false
-    }
-
-    private fun startTicker() {
-        ticker?.cancel()
-        ticker = viewModelScope.launch {
-            while (isActive) {
-                val mp = player
-                if (prepared && mp != null) positionMs.value = runCatching { mp.currentPosition }.getOrDefault(0)
-                delay(240)
-            }
-        }
-    }
-
-    // ---------- контакты ----------
-
-    fun hasContactsPermission(): Boolean {
-        val app = getApplication<Application>()
-        return app.checkSelfPermission(android.Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED &&
-            app.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-    }
-
-    fun assignToContact(song: Song) {
-        pendingContactSong = song
-        if (hasContactsPermission()) contactPickerRequest.value = true
-        else contactsPermissionRequest.value = true
-    }
-
-    fun onContactsPermission(granted: Boolean) {
-        if (granted) contactPickerRequest.value = true
-        else {
-            pendingContactSong = null
-            message.value = "Нет доступа к контактам"
-        }
-    }
-
-    fun onContactPicked(contactUri: Uri?) {
-        val song = pendingContactSong ?: return
-        pendingContactSong = null
-        if (contactUri == null) return
-        viewModelScope.launch {
-            loading.value = true
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val ringUri = ensureSettable(song, RingtoneManager.TYPE_RINGTONE)
-                    setContactRingtone(contactUri, ringUri)
-                }
-            }
-            loading.value = false
-            result.onSuccess { name ->
-                message.value = if (name.isBlank()) "Мелодия назначена контакту" else "Мелодия назначена: $name"
-            }
-            result.onFailure { message.value = "Не удалось назначить мелодию контакту" }
-        }
-    }
-
-    private fun setContactRingtone(contactUri: Uri, ringUri: Uri): String {
-        var id: Long? = null
-        var name = ""
-        resolver.query(
-            contactUri,
-            arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME_PRIMARY),
-            null, null, null
-        )?.use { c ->
-            if (c.moveToFirst()) {
-                id = c.getLong(0)
-                name = c.getString(1) ?: ""
-            }
-        }
-        val contactId = id ?: throw IllegalStateException("Контакт не найден")
-        val target = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId)
-        val values = ContentValues().apply {
-            put(ContactsContract.Contacts.CUSTOM_RINGTONE, ringUri.toString())
-        }
-        val rows = resolver.update(target, values, null, null)
-        if (rows == 0) {
-            val saved = resolver.query(
-                target,
-                arrayOf(ContactsContract.Contacts.CUSTOM_RINGTONE),
-                null, null, null
-            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-            if (saved != ringUri.toString()) throw IllegalStateException("Контакт не обновлён")
-        }
-        return name
-    }
-
-    // ---------- установка мелодии ----------
+    fun skip(d: Int) { val c = playingKey.value ?: return; val t = queue.getOrNull(queue.indexOf(c) + d) ?: return; val s = songs.value.firstOrNull { it.key == t } ?: return; val k = queue; playingKey.value = null; play(s, songs.value.filter { k.contains(it.key) }) }
+    fun pause() { val mp = player ?: return; if (prepared) runCatching { mp.pause() }; isPlaying.value = false; ticker?.cancel() }
+    fun resume() { val mp = player ?: return; if (!prepared) return; runCatching { mp.start() }; isPlaying.value = true; startTicker() }
+    fun seekFraction(f: Float) { val t = durationMs.value; if (t <= 0) return; val ms = (f.coerceIn(0f, 1f) * t).toInt(); if (prepared) runCatching { player?.seekTo(ms) }; positionMs.value = ms }
+    fun stop() { stopPlayer(); playingKey.value = null; positionMs.value = 0; durationMs.value = 0 }
+    private fun stopPlayer() { ticker?.cancel(); ticker = null; prepared = false; player?.let { mp -> runCatching { mp.reset() }; runCatching { mp.release() } }; player = null; isPlaying.value = false }
+    private fun startTicker() { ticker?.cancel(); ticker = viewModelScope.launch { while (isActive) { val mp = player; if (prepared && mp != null) positionMs.value = runCatching { mp.currentPosition }.getOrDefault(0); delay(240) } } }
 
     fun applyAs(song: Song, type: Int) {
         val app = getApplication<Application>()
         if (!Settings.System.canWrite(app)) { needWriteSettings.value = true; return }
         viewModelScope.launch {
             loading.value = true
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val uri = ensureSettable(song, type)
-                    RingtoneManager.setActualDefaultRingtoneUri(app, type, uri)
-                }
-            }
+            val r = withContext(Dispatchers.IO) { runCatching { RingtoneManager.setActualDefaultRingtoneUri(app, type, ensureSettable(song, type)) } }
             loading.value = false
-            message.value = if (result.isSuccess) {
-                when (type) {
-                    RingtoneManager.TYPE_NOTIFICATION -> "Звук уведомления установлен"
-                    RingtoneManager.TYPE_ALARM -> "Сигнал будильника установлен"
-                    else -> "Рингтон установлен"
-                }
-            } else "Не удалось установить мелодию"
+            message.value = if (r.isSuccess) when (type) { RingtoneManager.TYPE_NOTIFICATION -> "Звук уведомления установлен"; RingtoneManager.TYPE_ALARM -> "Сигнал будильника установлен"; else -> "Рингтон установлен" } else "Не удалось установить мелодию"
         }
     }
 
     private fun ensureSettable(song: Song, type: Int): Uri {
-        val dir: String
-        val column: String
+        val dir: String; val col: String
         when (type) {
-            RingtoneManager.TYPE_NOTIFICATION -> { dir = Environment.DIRECTORY_NOTIFICATIONS; column = MediaStore.Audio.Media.IS_NOTIFICATION }
-            RingtoneManager.TYPE_ALARM -> { dir = Environment.DIRECTORY_ALARMS; column = MediaStore.Audio.Media.IS_ALARM }
-            else -> { dir = Environment.DIRECTORY_RINGTONES; column = MediaStore.Audio.Media.IS_RINGTONE }
+            RingtoneManager.TYPE_NOTIFICATION -> { dir = Environment.DIRECTORY_NOTIFICATIONS; col = MediaStore.Audio.Media.IS_NOTIFICATION }
+            RingtoneManager.TYPE_ALARM -> { dir = Environment.DIRECTORY_ALARMS; col = MediaStore.Audio.Media.IS_ALARM }
+            else -> { dir = Environment.DIRECTORY_RINGTONES; col = MediaStore.Audio.Media.IS_RINGTONE }
         }
         if (Build.VERSION.SDK_INT >= 29 && song.uri != null) {
             if (song.owner == getApplication<Application>().packageName) return song.uri
@@ -732,167 +320,71 @@ class RingtoneViewModel(app: Application) : AndroidViewModel(app) {
             if (type == RingtoneManager.TYPE_ALARM && song.isAlarm) return song.uri
         }
         if (Build.VERSION.SDK_INT < 29 && song.uri != null) return song.uri
-
         val key = "copy_" + song.key.hashCode() + "_" + type
         val cached = prefs.getLong(key, -1L)
-        if (cached > 0) {
-            val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cached)
-            val ok = runCatching {
-                resolver.query(uri, arrayOf(MediaStore.Audio.Media._ID), null, null, null)?.use { it.moveToFirst() } ?: false
-            }.getOrDefault(false)
-            if (ok) return uri
-        }
-        val mime = mimeOf(song)
-        val target = insertCopy(displayTitle(song), dir, column, mime) { openSource(song) }
-        if (target.scheme == "content") {
-            prefs.edit().putLong(key, ContentUris.parseId(target)).apply()
-        }
+        if (cached > 0) { val u = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cached); if (runCatching { resolver.query(u, arrayOf(MediaStore.Audio.Media._ID), null, null, null)?.use { it.moveToFirst() } ?: false }.getOrDefault(false)) return u }
+        val target = insertCopy(displayTitle(song), dir, col, mimeOf(song)) { openSource(song) }
+        if (target.scheme == "content") prefs.edit().putLong(key, ContentUris.parseId(target)).apply()
         return target
     }
 
-    private fun mimeOf(song: Song): String {
-        val fromResolver = song.uri?.let { runCatching { resolver.getType(it) }.getOrNull() }
-        if (fromResolver != null) return fromResolver
-        val ext = File(song.path).extension.lowercase()
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "audio/mpeg"
-    }
+    private fun mimeOf(s: Song): String { s.uri?.let { runCatching { resolver.getType(it) }.getOrNull() }?.let { return it }; return MimeTypeMap.getSingleton().getMimeTypeFromExtension(File(s.path).extension.lowercase()) ?: "audio/mpeg" }
+    private fun openSource(s: Song): InputStream? = if (s.uri != null) runCatching { resolver.openInputStream(s.uri) }.getOrNull() else runCatching { FileInputStream(s.path) }.getOrNull()
 
-    private fun openSource(song: Song): InputStream? =
-        if (song.uri != null) runCatching { resolver.openInputStream(song.uri) }.getOrNull()
-        else runCatching { FileInputStream(song.path) }.getOrNull()
-
-    private fun insertCopy(title: String, dir: String, column: String, mime: String, open: () -> InputStream?): Uri {
-        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "mp3"
-        val fileName = safeName(title) + "." + ext
-
+    private fun insertCopy(title: String, dir: String, col: String, mime: String, open: () -> InputStream?): Uri {
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "mp3"; val name = safeName(title) + "." + ext
         if (Build.VERSION.SDK_INT < 29) {
-            @Suppress("DEPRECATION")
-            val publicDir = Environment.getExternalStoragePublicDirectory(dir)
-            publicDir.mkdirs()
-            val base = safeName(title)
-            var file = File(publicDir, fileName)
-            var index = 1
-            while (file.exists()) {
-                file = File(publicDir, base + "_" + index + "." + ext)
-                index++
-            }
+            @Suppress("DEPRECATION") val pd = Environment.getExternalStoragePublicDirectory(dir); pd.mkdirs()
+            var file = File(pd, name); var i = 1; val base = safeName(title)
+            while (file.exists()) { file = File(pd, base + "_" + i + "." + ext); i++ }
             val input = open() ?: throw IllegalStateException("Источник недоступен")
-            input.use { i -> FileOutputStream(file).use { o -> i.copyTo(o) } }
-            MediaScannerConnection.scanFile(
-                getApplication<Application>(),
-                arrayOf(file.absolutePath),
-                arrayOf(mime),
-                null
-            )
+            input.use { inn -> FileOutputStream(file).use { o -> inn.copyTo(o) } }
+            MediaScannerConnection.scanFile(getApplication<Application>(), arrayOf(file.absolutePath), arrayOf(mime), null)
             return Uri.fromFile(file)
         }
-
-        val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Audio.Media.TITLE, title)
-            put(MediaStore.Audio.Media.MIME_TYPE, mime)
-            put(MediaStore.Audio.Media.RELATIVE_PATH, dir)
-            put(MediaStore.Audio.Media.IS_PENDING, 1)
-            put(column, 1)
-        }
-        val target = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("Не удалось создать файл")
-        try {
-            val input = open() ?: throw IllegalStateException("Источник недоступен")
-            val output = resolver.openOutputStream(target) ?: throw IllegalStateException("Нет доступа на запись")
-            input.use { i -> output.use { o -> i.copyTo(o) } }
-        } catch (t: Throwable) {
-            runCatching { resolver.delete(target, null, null) }
-            throw t
-        }
-        values.clear()
-        values.put(MediaStore.Audio.Media.IS_PENDING, 0)
-        resolver.update(target, values, null, null)
+        val values = ContentValues().apply { put(MediaStore.Audio.Media.DISPLAY_NAME, name); put(MediaStore.Audio.Media.TITLE, title); put(MediaStore.Audio.Media.MIME_TYPE, mime); put(MediaStore.Audio.Media.RELATIVE_PATH, dir); put(MediaStore.Audio.Media.IS_PENDING, 1); put(col, 1) }
+        val target = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: throw IllegalStateException("Не удалось создать файл")
+        try { val input = open() ?: throw IllegalStateException("Источник недоступен"); val output = resolver.openOutputStream(target) ?: throw IllegalStateException("Нет доступа на запись"); input.use { inn -> output.use { o -> inn.copyTo(o) } } }
+        catch (t: Throwable) { runCatching { resolver.delete(target, null, null) }; throw t }
+        values.clear(); values.put(MediaStore.Audio.Media.IS_PENDING, 0); resolver.update(target, values, null, null)
         return target
     }
 
-    private fun safeName(raw: String): String {
-        val cleaned = raw.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 ._\\-]"), "_").trim()
-        return if (cleaned.isEmpty()) "ringtone" else cleaned.take(60)
-    }
-
-    // ---------- импорт ----------
+    private fun safeName(raw: String): String { val c = raw.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 ._\\-]"), "_").trim(); return if (c.isEmpty()) "ringtone" else c.take(60) }
 
     fun importFile(source: Uri) {
         val app = getApplication<Application>()
-        val rawName = runCatching {
-            resolver.query(source, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-                if (it.moveToFirst()) it.getString(0) else null
-            }
-        }.getOrNull() ?: ("ringtone_" + System.currentTimeMillis())
-        val title = rawName.substringBeforeLast('.')
+        val raw = runCatching { resolver.query(source, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } }.getOrNull() ?: ("ringtone_" + System.currentTimeMillis())
+        val title = raw.substringBeforeLast('.')
         viewModelScope.launch {
             loading.value = true
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val mime = resolver.getType(source) ?: "audio/mpeg"
-                    if (Build.VERSION.SDK_INT >= 29) {
-                        insertCopy(title, Environment.DIRECTORY_RINGTONES, MediaStore.Audio.Media.IS_RINGTONE, mime) {
-                            resolver.openInputStream(source)
-                        }
-                    } else {
-                        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "mp3"
-                        @Suppress("DEPRECATION")
-                        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_RINGTONES)
-                        dir.mkdirs()
-                        val file = File(dir, safeName(title) + "." + ext)
-                        val input = resolver.openInputStream(source) ?: throw IllegalStateException("Источник недоступен")
-                        input.use { i -> FileOutputStream(file).use { o -> i.copyTo(o) } }
-                        MediaScannerConnection.scanFile(app, arrayOf(file.absolutePath), arrayOf(mime), null)
-                        Uri.fromFile(file)
-                    }
-                }
-            }
+            val r = withContext(Dispatchers.IO) { runCatching {
+                val mime = resolver.getType(source) ?: "audio/mpeg"
+                if (Build.VERSION.SDK_INT >= 29) insertCopy(title, Environment.DIRECTORY_RINGTONES, MediaStore.Audio.Media.IS_RINGTONE, mime) { resolver.openInputStream(source) }
+                else { val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "mp3"; @Suppress("DEPRECATION") val d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_RINGTONES); d.mkdirs(); val f = File(d, safeName(title) + "." + ext); val input = resolver.openInputStream(source) ?: throw IllegalStateException("Источник недоступен"); input.use { inn -> FileOutputStream(f).use { o -> inn.copyTo(o) } }; MediaScannerConnection.scanFile(app, arrayOf(f.absolutePath), arrayOf(mime), null); Uri.fromFile(f) }
+            } }
             loading.value = false
-            if (result.isSuccess) { message.value = "Файл добавлен"; delay(700); quickRefresh() }
-            else message.value = "Не удалось добавить файл"
+            if (r.isSuccess) { message.value = "Файл добавлен"; delay(700); quickRefresh() } else message.value = "Не удалось добавить файл"
         }
     }
-
-    // ---------- удаление ----------
 
     fun delete(song: Song) {
         val u = song.uri
         if (u != null) {
-            if (Build.VERSION.SDK_INT >= 30) {
-                runCatching {
-                    deleteRequest.value = MediaStore.createDeleteRequest(resolver, listOf(u)).intentSender
-                }.onFailure { message.value = "Не удалось удалить файл" }
-                return
-            }
+            if (Build.VERSION.SDK_INT >= 30) { runCatching { deleteRequest.value = MediaStore.createDeleteRequest(resolver, listOf(u)).intentSender }.onFailure { message.value = "Не удалось удалить файл" }; return }
             viewModelScope.launch {
                 val r = withContext(Dispatchers.IO) { runCatching { resolver.delete(u, null, null) } }
-                r.onSuccess {
-                    if (playingKey.value == song.key) stop()
-                    message.value = "Файл удалён"
-                    quickRefresh()
-                }
-                r.onFailure { e ->
-                    if (Build.VERSION.SDK_INT >= 29 && e is android.app.RecoverableSecurityException) {
-                        deleteRequest.value = e.userAction.actionIntent.intentSender
-                    } else message.value = "Не удалось удалить файл"
-                }
+                r.onSuccess { if (playingKey.value == song.key) stop(); message.value = "Файл удалён"; quickRefresh() }
+                r.onFailure { e -> if (Build.VERSION.SDK_INT >= 29 && e is android.app.RecoverableSecurityException) deleteRequest.value = e.userAction.actionIntent.intentSender else message.value = "Не удалось удалить файл" }
             }
             return
         }
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) { runCatching { File(song.path).delete() }.getOrDefault(false) }
-            if (ok) {
-                if (playingKey.value == song.key) stop()
-                songs.value = songs.value.filter { it.key != song.key }
-                message.value = "Файл удалён"
-            } else message.value = "Файл защищён системой. Проиндексируйте его и удалите снова."
+            if (ok) { if (playingKey.value == song.key) stop(); songs.value = songs.value.filter { it.key != song.key }; message.value = "Файл удалён" }
+            else message.value = "Файл защищён системой. Проиндексируйте его и удалите снова."
         }
     }
 
-    override fun onCleared() {
-        stopPlayer()
-        scanJob?.cancel()
-        super.onCleared()
-    }
+    override fun onCleared() { stopPlayer(); scanJob?.cancel(); super.onCleared() }
 }
